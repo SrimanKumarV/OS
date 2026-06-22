@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Railway Track Allocation — Banker's Algorithm</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e14;
+  --bg2: #0f1520;
+  --bg3: #141c2b;
+  --panel: #111827;
+  --border: #1e2d45;
+  --border2: #243450;
+  --green: #00e5a0;
+  --green-dim: rgba(0,229,160,0.12);
+  --green-glow: rgba(0,229,160,0.35);
+  --red: #ff4b5c;
+  --red-dim: rgba(255,75,92,0.12);
+  --amber: #ffb547;
+  --amber-dim: rgba(255,181,71,0.12);
+  --blue: #4db8ff;
+  --blue-dim: rgba(77,184,255,0.12);
+  --cyan: #00d4ff;
+  --text: #e2eaf8;
+  --text2: #7a92b8;
+  --text3: #3d5475;
+  --mono: 'Share Tech Mono', monospace;
+  --head: 'Orbitron', monospace;
+  --body: 'Rajdhani', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--body); overflow-x: hidden; }
+
+/* scanline overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+}
+
+/* ── Layout ── */
+.app { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+
+/* ── Header ── */
+header {
+  background: linear-gradient(180deg, #0d1629 0%, var(--bg2) 100%);
+  border-bottom: 1px solid var(--border2);
+  padding: 16px 28px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: relative;
+}
+header::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--green), transparent);
+  opacity: 0.4;
+}
+.header-left { display: flex; align-items: center; gap: 16px; }
+.logo-mark {
+  width: 42px; height: 42px; border: 1.5px solid var(--green);
+  display: flex; align-items: center; justify-content: center;
+  position: relative; transform: rotate(45deg);
+  box-shadow: 0 0 12px var(--green-glow);
+}
+.logo-mark span { transform: rotate(-45deg); font-size: 18px; }
+.header-title h1 { font-family: var(--head); font-size: 15px; font-weight: 700; letter-spacing: .12em; color: var(--green); }
+.header-title p { font-family: var(--mono); font-size: 10px; color: var(--text2); letter-spacing: .08em; margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 20px; }
+.sys-status {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11px;
+}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s infinite; }
+.status-dot.safe { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.unsafe { background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink .6s infinite; }
+.clock { font-family: var(--mono); font-size: 12px; color: var(--text2); }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* ── Main Grid ── */
+.main {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  grid-template-rows: 1fr;
+  gap: 0;
+  height: calc(100vh - 75px);
+  overflow: hidden;
+}
+
+/* ── Panels ── */
+.panel-left, .panel-center, .panel-right {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+.panel-left { border-right: 1px solid var(--border); background: var(--bg2); padding: 20px; }
+.panel-center { background: var(--bg); padding: 20px; }
+.panel-right { border-left: 1px solid var(--border); background: var(--bg2); padding: 20px; }
+
+/* ── Section Headers ── */
+.sec-hd {
+  font-family: var(--mono); font-size: 10px; font-weight: 400;
+  color: var(--text3); letter-spacing: .12em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+}
+.sec-hd::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── Train Cards (Control Board) ── */
+.train-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 10px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+.train-card::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--c, var(--border2));
+  transition: background .3s;
+}
+.train-card:hover { border-color: var(--border2); }
+.train-card.active { border-color: var(--c, var(--border2)); background: var(--bg3); }
+.train-card.status-done { opacity: 0.45; }
+.tc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.tc-name { font-family: var(--head); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+.tc-badge {
+  font-family: var(--mono); font-size: 9px; padding: 3px 8px;
+  border-radius: 2px; letter-spacing: .08em;
+}
+.badge-waiting { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(255,181,71,.25); }
+.badge-active  { background: var(--green-dim); color: var(--green); border: 1px solid rgba(0,229,160,.25); }
+.badge-blocked { background: var(--red-dim); color: var(--red); border: 1px solid rgba(255,75,92,.25); }
+.badge-done    { background: rgba(255,255,255,.04); color: var(--text3); border: 1px solid var(--border); }
+
+/* Progress bar */
+.tc-bars { display: flex; flex-direction: column; gap: 5px; }
+.tc-bar-row { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10px; color: var(--text2); }
+.tc-bar-label { width: 22px; flex-shrink: 0; }
+.tc-bar-track { flex: 1; height: 5px; background: rgba(255,255,255,.06); border-radius: 2px; overflow: hidden; }
+.tc-bar-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
+.tc-bar-val { width: 14px; text-align: right; flex-shrink: 0; }
+
+/* Direction indicator */
+.tc-dir { font-family: var(--mono); font-size: 9px; color: var(--text3); margin-top: 8px; display: flex; justify-content: space-between; }
+
+/* ── Track Grid ── */
+.track-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.track-cell {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 9px;
+  color: var(--text3);
+  transition: all .3s;
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+}
+.track-cell.free { border-color: var(--green-dim); background: var(--green-dim); }
+.track-cell.free .t-icon { color: var(--green); }
+.track-cell.used { border-color: var(--border2); background: var(--bg3); }
+.track-cell.used .t-icon { color: var(--amber); }
+.t-icon { font-size: 16px; margin-bottom: 2px; }
+.track-cell.free::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at center, rgba(0,229,160,.06) 0%, transparent 70%);
+}
+
+/* ── Stats Row ── */
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; }
+.stat-box {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 12px 10px; text-align: center;
+}
+.stat-box .sv { font-family: var(--head); font-size: 22px; font-weight: 700; }
+.stat-box .sl { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: .08em; margin-top: 3px; }
+.sv.green { color: var(--green); text-shadow: 0 0 12px var(--green-glow); }
+.sv.amber { color: var(--amber); }
+.sv.red   { color: var(--red); }
+
+/* ── Allocation Table ── */
+.alloc-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
+.alloc-table th {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--text3);
+  padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: center;
+}
+.alloc-table th:first-child { text-align: left; }
+.alloc-table td { padding: 10px 10px; border-bottom: 1px solid var(--border); text-align: center; color: var(--text); font-family: var(--body); font-size: 14px; }
+.alloc-table td:first-child { text-align: left; font-family: var(--head); font-size: 11px; letter-spacing: .06em; }
+.alloc-table tr:last-child td { border-bottom: none; }
+.alloc-table tr { transition: background .2s; cursor: pointer; }
+.alloc-table tr:hover td { background: rgba(255,255,255,.025); }
+.alloc-table tr.sel td { background: rgba(77,184,255,.07); }
+.need-val { font-family: var(--mono); font-size: 12px; }
+.need-val.urgent { color: var(--red); }
+.need-val.ok     { color: var(--green); }
+
+/* ── Safe sequence display ── */
+.safe-seq {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 14px; margin-bottom: 16px;
+}
+.safe-seq-title { font-family: var(--mono); font-size: 10px; color: var(--text2); margin-bottom: 10px; }
+.seq-chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.seq-node {
+  font-family: var(--head); font-size: 10px; padding: 5px 10px;
+  border-radius: 3px; border: 1px solid; letter-spacing: .06em;
+}
+.seq-arrow { color: var(--text3); font-size: 14px; }
+
+/* ── System message ── */
+.sys-msg {
+  border-radius: 6px; padding: 12px 14px;
+  font-family: var(--mono); font-size: 11px; line-height: 1.7;
+  margin-bottom: 14px; display: none;
+  animation: slideIn .3s ease;
+}
+@keyframes slideIn { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:none} }
+.sys-msg.safe    { background: var(--green-dim); border: 1px solid rgba(0,229,160,.3); color: var(--green); }
+.sys-msg.unsafe  { background: var(--red-dim);   border: 1px solid rgba(255,75,92,.3);  color: var(--red); }
+.sys-msg.info    { background: var(--blue-dim);  border: 1px solid rgba(77,184,255,.3); color: var(--blue); }
+.sys-msg.warning { background: var(--amber-dim); border: 1px solid rgba(255,181,71,.3); color: var(--amber); }
+
+/* ── Controls ── */
+.ctrl-block { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px; margin-bottom: 12px; }
+.ctrl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.ctrl-row:last-child { margin-bottom: 0; }
+.ctrl-label { font-family: var(--mono); font-size: 10px; color: var(--text2); letter-spacing: .06em; width: 56px; flex-shrink: 0; }
+select, input[type=number] {
+  background: var(--bg); border: 1px solid var(--border2);
+  color: var(--text); font-family: var(--mono); font-size: 11px;
+  padding: 7px 10px; border-radius: 4px; outline: none;
+  transition: border-color .2s;
+  -webkit-appearance: none;
+}
+select:focus, input[type=number]:focus { border-color: var(--cyan); }
+select { flex: 1; cursor: pointer; }
+input[type=number] { width: 64px; text-align: center; }
+.btn {
+  font-family: var(--head); font-size: 10px; letter-spacing: .1em;
+  padding: 8px 14px; border-radius: 4px; border: 1px solid;
+  cursor: pointer; transition: all .2s; text-transform: uppercase;
+  white-space: nowrap;
+}
+.btn-grant  { background: var(--green-dim); border-color: rgba(0,229,160,.4); color: var(--green); }
+.btn-grant:hover { background: rgba(0,229,160,.25); box-shadow: 0 0 12px var(--green-glow); }
+.btn-release{ background: var(--amber-dim); border-color: rgba(255,181,71,.4); color: var(--amber); }
+.btn-release:hover { background: rgba(255,181,71,.2); }
+.btn-action { background: var(--blue-dim); border-color: rgba(77,184,255,.4); color: var(--blue); }
+.btn-action:hover { background: rgba(77,184,255,.2); }
+.btn-danger { background: var(--red-dim); border-color: rgba(255,75,92,.4); color: var(--red); }
+.btn-danger:hover { background: rgba(255,75,92,.2); }
+.btn-full { width: 100%; margin-bottom: 8px; }
+.btn-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.btn-row .btn { flex: 1; }
+
+/* ── Log ── */
+.log-wrap {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  height: 200px; overflow-y: auto; padding: 10px 12px;
+  scrollbar-width: thin; scrollbar-color: var(--border2) transparent;
+}
+.log-entry {
+  font-family: var(--mono); font-size: 10px; line-height: 1.8;
+  border-bottom: 1px solid rgba(255,255,255,.03); padding: 1px 0;
+}
+.log-entry .ts { color: var(--text3); margin-right: 8px; }
+.log-ok   { color: var(--green); }
+.log-err  { color: var(--red); }
+.log-info { color: var(--blue); }
+.log-warn { color: var(--amber); }
+
+/* ── Junction Visualizer ── */
+.junction-wrap {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 16px; margin-bottom: 20px;
+}
+#junctionSvg { width: 100%; height: auto; display: block; }
+
+/* ── Algorithm Steps ── */
+.algo-step {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+  padding: 10px 12px; margin-bottom: 6px;
+  font-family: var(--mono); font-size: 10px; line-height: 1.7;
+}
+.algo-step .step-n { color: var(--cyan); margin-right: 6px; }
+.algo-step.active-step { border-color: var(--cyan); background: rgba(0,212,255,.06); }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+  .panel-left, .panel-center, .panel-right { height: auto; overflow-y: visible; border: none; border-bottom: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="header-left">
+    <div class="logo-mark"><span>🚂</span></div>
+    <div class="header-title">
+      <h1>RAILWAY JUNCTION CONTROL</h1>
+      <p>BANKER'S ALGORITHM — DEADLOCK AVOIDANCE SYSTEM v2.0</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="sys-status">
+      <div class="status-dot safe" id="headerDot"></div>
+      <span id="headerStatus" style="font-family:var(--mono);font-size:11px;color:var(--text2)">SYSTEM SAFE</span>
+    </div>
+    <div class="clock" id="clockEl">00:00:00</div>
+  </div>
+</header>
+
+<!-- ── MAIN ── -->
+<div class="main">
+
+  <!-- ════════════════ LEFT: Control Board ════════════════ -->
+  <div class="panel-left">
+    <div class="sec-hd">Control Board</div>
+
+    <!-- Train cards injected by JS -->
+    <div id="trainCards"></div>
+
+    <div class="sec-hd" style="margin-top:8px">Track Sections</div>
+    <div class="track-grid" id="trackGrid"></div>
+
+    <div class="stats-row">
+      <div class="stat-box"><div class="sv green" id="statAvail">—</div><div class="sl">AVAILABLE</div></div>
+      <div class="stat-box"><div class="sv amber" id="statUsed">—</div><div class="sl">ALLOCATED</div></div>
+      <div class="stat-box"><div class="sv" id="statTotal" style="color:var(--cyan)">10</div><div class="sl">TOTAL</div></div>
+    </div>
+  </div>
+
+  <!-- ════════════════ CENTER: Junction + Table ════════════════ -->
+  <div class="panel-center">
+
+    <div class="sec-hd">Junction Visualizer</div>
+    <div class="junction-wrap">
+      <svg id="junctionSvg" viewBox="0 0 560 220">
+        <!-- track grid -->
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M2 2L8 5L2 8" fill="none" stroke="context-stroke" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </marker>
+        </defs>
+        <!-- Central junction box -->
+        <rect x="200" y="75" width="160" height="70" rx="8" fill="rgba(30,45,69,.8)" stroke="#243450" stroke-width="1"/>
+        <text x="280" y="106" text-anchor="middle" font-family="'Orbitron',monospace" font-size="9" fill="#4db8ff" letter-spacing="2">JUNCTION</text>
+        <text x="280" y="122" text-anchor="middle" font-family="'Share Tech Mono',monospace" font-size="8" fill="#3d5475">TRACK ALLOCATION NODE</text>
+        <!-- Tracks from each direction -->
+        <!-- Train A - top -->
+        <line id="lineA" x1="280" y1="0"  x2="280" y2="75"  stroke="#00e5a0" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        <!-- Train B - bottom -->
+        <line id="lineB" x1="280" y1="145" x2="280" y2="220" stroke="#4db8ff" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        <!-- Train C - left -->
+        <line id="lineC" x1="0"   y1="110" x2="200" y2="110" stroke="#ff9f47" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        <!-- Train D - right -->
+        <line id="lineD" x1="360" y1="110" x2="560" y2="110" stroke="#d47aff" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+        <!-- Train E - diagonal -->
+        <line id="lineE" x1="80"  y1="20"  x2="200" y2="90"  stroke="#ff4b5c" stroke-width="2.5" stroke-linecap="round" opacity="0.7"/>
+
+        <!-- Train icons - injected by JS -->
+        <g id="trainIcons"></g>
+
+        <!-- Direction labels -->
+        <text x="280" y="14" text-anchor="middle" font-family="'Share Tech Mono',monospace" font-size="9" fill="#3d5475">NORTH</text>
+        <text x="280" y="216" text-anchor="middle" font-family="'Share Tech Mono',monospace" font-size="9" fill="#3d5475">SOUTH</text>
+        <text x="14" y="113" font-family="'Share Tech Mono',monospace" font-size="9" fill="#3d5475">WEST</text>
+        <text x="506" y="113" font-family="'Share Tech Mono',monospace" font-size="9" fill="#3d5475">EAST</text>
+        <text x="60" y="18" font-family="'Share Tech Mono',monospace" font-size="9" fill="#3d5475">NW</text>
+      </svg>
+    </div>
+
+    <!-- System message -->
+    <div id="sysMsg" class="sys-msg"></div>
+
+    <!-- Safe sequence -->
+    <div class="safe-seq" id="safeSeqBox">
+      <div class="safe-seq-title">▸ SAFE SEQUENCE</div>
+      <div class="seq-chain" id="seqChain"><span style="font-family:var(--mono);font-size:10px;color:var(--text3)">Run safety check to compute...</span></div>
+    </div>
+
+    <div class="sec-hd">Allocation State Matrix</div>
+    <table class="alloc-table" id="allocTable">
+      <thead>
+        <tr>
+          <th>Train</th><th>Direction</th><th>Max</th><th>Alloc</th><th>Need</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="allocBody"></tbody>
+    </table>
+
+    <div class="sec-hd">Algorithm Steps</div>
+    <div id="algoSteps">
+      <div class="algo-step"><span class="step-n">01</span> Check if request ≤ Need[i] — else error (exceeded max claim)</div>
+      <div class="algo-step"><span class="step-n">02</span> Check if request ≤ Available — else train must wait</div>
+      <div class="algo-step"><span class="step-n">03</span> Pretend to allocate: Available -= R; Allocation[i] += R; Need[i] -= R</div>
+      <div class="algo-step"><span class="step-n">04</span> Run Safety Algorithm on new state</div>
+      <div class="algo-step"><span class="step-n">05</span> If SAFE → grant; else rollback and deny</div>
+    </div>
+  </div>
+
+  <!-- ════════════════ RIGHT: Controls + Log ════════════════ -->
+  <div class="panel-right">
+    <div class="sec-hd">Request Allocation</div>
+    <div class="ctrl-block">
+      <div class="ctrl-row">
+        <span class="ctrl-label">TRAIN</span>
+        <select id="reqTrain"></select>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">TRACKS</span>
+        <input type="number" id="reqAmt" value="1" min="1" max="5">
+      </div>
+      <div class="ctrl-row">
+        <button class="btn btn-grant btn-full" onclick="handleRequest()">▶ GRANT REQUEST</button>
+      </div>
+    </div>
+
+    <div class="sec-hd">Release Tracks</div>
+    <div class="ctrl-block">
+      <div class="ctrl-row">
+        <span class="ctrl-label">TRAIN</span>
+        <select id="relTrain"></select>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">TRACKS</span>
+        <input type="number" id="relAmt" value="1" min="1" max="5">
+      </div>
+      <div class="ctrl-row">
+        <button class="btn btn-release btn-full" onclick="handleRelease()">◀ RELEASE TRACKS</button>
+      </div>
+    </div>
+
+    <div class="sec-hd">Safety Controls</div>
+    <div class="btn-row">
+      <button class="btn btn-action" onclick="runSafetyCheck()">SAFETY CHECK</button>
+      <button class="btn btn-action" onclick="stepSimulate()">STEP SIM</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-action" onclick="autoRun()">AUTO RUN</button>
+      <button class="btn btn-danger" onclick="resetSystem()">RESET</button>
+    </div>
+
+    <div class="sec-hd">Activity Log</div>
+    <div class="log-wrap" id="logBox"></div>
+
+    <div class="sec-hd" style="margin-top:12px">Banker's Reference</div>
+    <div style="font-family:var(--mono);font-size:10px;color:var(--text3);line-height:2;background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px">
+      <div>Available  = Total − ΣAllocation</div>
+      <div>Need[i]    = Max[i] − Allocation[i]</div>
+      <div>Safe State ⟺ safe sequence exists</div>
+      <div style="margin-top:6px;color:var(--text2)">Safe seq: every train can finish</div>
+      <div style="color:var(--text2)">by using available + released tracks</div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+</div><!-- /app -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+// DATA
+// ═══════════════════════════════════════════════════════
+const TOTAL = 10;
+const TRAINS = [
+  { name: 'Train A', dir: 'NORTH → SOUTH', color: '#00e5a0', max: 4, icon: '🚄', lineId: 'lineA', pos: {x:270, y:40} },
+  { name: 'Train B', dir: 'SOUTH → NORTH', color: '#4db8ff', max: 3, icon: '🚃', lineId: 'lineB', pos: {x:270, y:180} },
+  { name: 'Train C', dir: 'WEST → EAST',   color: '#ff9f47', max: 5, icon: '🚅', lineId: 'lineC', pos: {x:60,  y:100} },
+  { name: 'Train D', dir: 'EAST → WEST',   color: '#d47aff', max: 3, icon: '🚆', lineId: 'lineD', pos: {x:470, y:100} },
+  { name: 'Train E', dir: 'NW → SE',       color: '#ff4b5c', max: 2, icon: '🚇', lineId: 'lineE', pos: {x:100, y:40} },
+];
+
+let S = {
+  allocated: [2, 1, 2, 1, 1],
+  max: TRAINS.map(t => t.max),
+  status: ['waiting','waiting','waiting','waiting','waiting'],
+  stepIdx: 0,
+};
+function avail() { return TOTAL - S.allocated.reduce((a,b)=>a+b,0); }
+function need(i) { return S.max[i] - S.allocated[i]; }
+
+// ═══════════════════════════════════════════════════════
+// BANKER'S ALGORITHM
+// ═══════════════════════════════════════════════════════
+function bankersCheck(alloc, available) {
+  const n = TRAINS.length;
+  const finish = new Array(n).fill(false);
+  let work = available;
+  const seq = [];
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (let i = 0; i < n; i++) {
+      if (!finish[i] && S.status[i] !== 'done') {
+        const nd = S.max[i] - alloc[i];
+        if (nd <= work) {
+          finish[i] = true;
+          work += alloc[i];
+          seq.push(i);
+          progress = true;
+        }
+      } else if (!finish[i] && S.status[i] === 'done') {
+        finish[i] = true;
+      }
+    }
+  }
+  return { safe: finish.every(Boolean), seq, work };
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════
+function render() {
+  renderTrainCards();
+  renderTrackGrid();
+  renderStats();
+  renderTable();
+  renderSelects();
+  renderJunction();
+  renderSafeSeq();
+  updateHeader();
+}
+
+function renderTrainCards() {
+  const av = avail();
+  document.getElementById('trainCards').innerHTML = TRAINS.map((t, i) => {
+    const alloc = S.allocated[i];
+    const nd = need(i);
+    const st = S.status[i];
+    const badge = st === 'done' ? '<span class="tc-badge badge-done">CLEARED</span>'
+      : st === 'running' ? '<span class="tc-badge badge-active">ACTIVE</span>'
+      : nd > av ? '<span class="tc-badge badge-blocked">BLOCKED</span>'
+      : '<span class="tc-badge badge-waiting">WAITING</span>';
+
+    const allocPct = (alloc / t.max) * 100;
+    const needPct  = (nd    / t.max) * 100;
+
+    return `<div class="train-card status-${st}" style="--c:${t.color}" onclick="selectTrain(${i})">
+      <div class="tc-top">
+        <span class="tc-name" style="color:${t.color}">${t.icon} ${t.name}</span>
+        ${badge}
+      </div>
+      <div class="tc-bars">
+        <div class="tc-bar-row">
+          <span class="tc-bar-label">ALLOC</span>
+          <div class="tc-bar-track"><div class="tc-bar-fill" style="width:${allocPct}%;background:${t.color}"></div></div>
+          <span class="tc-bar-val">${alloc}</span>
+        </div>
+        <div class="tc-bar-row">
+          <span class="tc-bar-label">NEED</span>
+          <div class="tc-bar-track"><div class="tc-bar-fill" style="width:${needPct}%;background:${nd>av?'#ff4b5c':'#ffb547'}"></div></div>
+          <span class="tc-bar-val">${nd}</span>
+        </div>
+        <div class="tc-bar-row">
+          <span class="tc-bar-label">MAX</span>
+          <div class="tc-bar-track"><div class="tc-bar-fill" style="width:100%;background:rgba(255,255,255,.1)"></div></div>
+          <span class="tc-bar-val">${t.max}</span>
+        </div>
+      </div>
+      <div class="tc-dir"><span>${t.dir}</span><span style="color:${t.color}">▸</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderTrackGrid() {
+  const used = TOTAL - avail();
+  document.getElementById('trackGrid').innerHTML = Array.from({length:TOTAL},(_,i)=>{
+    const taken = i < used;
+    return `<div class="track-cell ${taken?'used':'free'}">
+      <div class="t-icon">${taken?'🔴':'🟢'}</div>
+      <span>T${i+1}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderStats() {
+  const av = avail();
+  const used = TOTAL - av;
+  document.getElementById('statAvail').textContent = av;
+  document.getElementById('statUsed').textContent = used;
+}
+
+function renderTable() {
+  const av = avail();
+  document.getElementById('allocBody').innerHTML = TRAINS.map((t,i)=>{
+    const nd = need(i);
+    const st = S.status[i];
+    const badgeHtml = st==='done'
+      ? `<span style="font-family:var(--mono);font-size:9px;color:var(--text3)">CLEARED</span>`
+      : st==='running'
+      ? `<span style="font-family:var(--mono);font-size:9px;color:var(--green)">ACTIVE</span>`
+      : `<span style="font-family:var(--mono);font-size:9px;color:var(--amber)">WAITING</span>`;
+    return `<tr onclick="selectTrain(${i})">
+      <td style="color:${t.color}">${t.name}</td>
+      <td style="font-size:11px;color:var(--text2)">${t.dir}</td>
+      <td><span style="font-family:var(--mono)">${t.max}</span></td>
+      <td><span style="font-family:var(--mono);color:${t.color}">${S.allocated[i]}</span></td>
+      <td><span class="need-val ${nd>av?'urgent':'ok'}">${nd}</span></td>
+      <td>${badgeHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSelects() {
+  const opts = TRAINS.map((t,i)=>`<option value="${i}">${t.name}</option>`).join('');
+  document.getElementById('reqTrain').innerHTML = opts;
+  document.getElementById('relTrain').innerHTML = opts;
+}
+
+function renderJunction() {
+  const iconG = document.getElementById('trainIcons');
+  iconG.innerHTML = TRAINS.map((t,i)=>{
+    const st = S.status[i];
+    const op = st === 'done' ? 0.25 : 1;
+    const line = document.getElementById(t.lineId);
+    if (line) line.style.opacity = st==='done' ? 0.15 : st==='running' ? 1 : 0.5;
+    return `<g opacity="${op}">
+      <circle cx="${t.pos.x}" cy="${t.pos.y}" r="14" fill="${t.color}" fill-opacity="0.15" stroke="${t.color}" stroke-width="${st==='running'?2:1}"/>
+      <text x="${t.pos.x}" y="${t.pos.y+4}" text-anchor="middle" font-size="13">${t.icon}</text>
+      <text x="${t.pos.x}" y="${t.pos.y+22}" text-anchor="middle" font-family="'Share Tech Mono',monospace" font-size="8" fill="${t.color}">${TRAINS[i].name.replace('Train ','T')}</text>
+    </g>`;
+  }).join('');
+}
+
+function renderSafeSeq() {
+  const { safe, seq } = bankersCheck(S.allocated, avail());
+  const chain = document.getElementById('seqChain');
+  if (safe) {
+    chain.innerHTML = seq.map((idx,j)=>{
+      const t = TRAINS[idx];
+      return `<span class="seq-node" style="color:${t.color};border-color:${t.color}40;background:${t.color}15">${t.name}</span>`
+        + (j<seq.length-1?`<span class="seq-arrow">→</span>`:'');
+    }).join('');
+  } else {
+    chain.innerHTML = `<span style="font-family:var(--mono);font-size:10px;color:var(--red)">⚠ NO SAFE SEQUENCE — DEADLOCK RISK</span>`;
+  }
+}
+
+function updateHeader() {
+  const { safe } = bankersCheck(S.allocated, avail());
+  const dot = document.getElementById('headerDot');
+  const lbl = document.getElementById('headerStatus');
+  dot.className = `status-dot ${safe?'safe':'unsafe'}`;
+  lbl.textContent = safe ? 'SYSTEM SAFE' : 'UNSAFE STATE';
+  lbl.style.color = safe ? 'var(--green)' : 'var(--red)';
+}
+
+// ═══════════════════════════════════════════════════════
+// ACTIONS
+// ═══════════════════════════════════════════════════════
+function handleRequest() {
+  const i = parseInt(document.getElementById('reqTrain').value);
+  const amt = parseInt(document.getElementById('reqAmt').value);
+  if (isNaN(amt) || amt < 1) return;
+  const t = TRAINS[i];
+
+  if (S.status[i] === 'done') { showMsg('warning', `${t.name} has already cleared the junction.`); return; }
+  if (amt > need(i)) {
+    showMsg('unsafe', `REQUEST DENIED — ${t.name} requested ${amt} but max need is only ${need(i)} (exceeds declared max).`);
+    log(`DENIED: ${t.name} req=${amt} exceeds need=${need(i)}`, 'err');
+    highlightStep(1); return;
+  }
+  if (amt > avail()) {
+    showMsg('warning', `TRAIN MUST WAIT — ${t.name} needs ${amt} sections, only ${avail()} available.`);
+    log(`WAIT: ${t.name} req=${amt}, avail=${avail()}`, 'warn');
+    highlightStep(2); return;
+  }
+  // Pretend allocate
+  const origAlloc = S.allocated[i];
+  S.allocated[i] += amt;
+  const newAvail = avail();
+  const { safe, seq } = bankersCheck(S.allocated, newAvail);
+  if (!safe) {
+    S.allocated[i] = origAlloc;
+    showMsg('unsafe', `REQUEST DENIED (UNSAFE STATE) — Granting ${amt} to ${t.name} would create deadlock. Banker's Algorithm blocked this allocation.`);
+    log(`UNSAFE: ${t.name} +${amt} → rolled back`, 'err');
+    highlightStep(4); return;
+  }
+  S.status[i] = 'running';
+  const seqStr = seq.map(x=>TRAINS[x].name).join(' → ');
+  showMsg('safe', `✓ GRANTED — ${t.name} received ${amt} track section(s). Available: ${avail()}. Safe sequence: ${seqStr}`);
+  log(`GRANTED: ${t.name} +${amt} | avail=${avail()} | seq: ${seqStr}`, 'ok');
+  highlightStep(5);
+  render();
+}
+
+function handleRelease() {
+  const i = parseInt(document.getElementById('relTrain').value);
+  const amt = parseInt(document.getElementById('relAmt').value);
+  if (isNaN(amt) || amt < 1) return;
+  const t = TRAINS[i];
+  if (amt > S.allocated[i]) {
+    showMsg('warning', `Cannot release ${amt} — ${t.name} only holds ${S.allocated[i]} sections.`);
+    return;
+  }
+  S.allocated[i] -= amt;
+  if (S.allocated[i] === 0) { S.status[i] = 'done'; }
+  showMsg('info', `◀ RELEASED — ${t.name} returned ${amt} section(s). Available: ${avail()}.`);
+  log(`RELEASED: ${t.name} -${amt} | avail=${avail()}`, 'info');
+  render();
+}
+
+function runSafetyCheck() {
+  const { safe, seq } = bankersCheck(S.allocated, avail());
+  if (safe) {
+    const seqStr = seq.map(x=>TRAINS[x].name).join(' → ');
+    showMsg('safe', `SAFETY CHECK PASSED — Safe sequence found: ${seqStr}`);
+    log(`Safety check: SAFE | seq: ${seqStr}`, 'ok');
+  } else {
+    showMsg('unsafe', `SAFETY CHECK FAILED — No safe sequence exists. System is in an unsafe state!`);
+    log('Safety check: UNSAFE — deadlock risk!', 'err');
+  }
+  render();
+}
+
+function stepSimulate() {
+  const { safe, seq } = bankersCheck(S.allocated, avail());
+  if (!seq.length) { showMsg('info', 'All trains have cleared the junction!'); return; }
+  if (!safe) { showMsg('unsafe', 'Cannot step — system is in an unsafe state.'); return; }
+  const i = seq[0];
+  const t = TRAINS[i];
+  const nd = need(i);
+  if (nd <= avail()) {
+    const released = S.allocated[i] + nd;
+    S.allocated[i] = 0;
+    S.status[i] = 'done';
+    showMsg('safe', `✓ STEP — ${t.name} acquires ${nd} needed section(s), completes crossing, releases ${released} total sections.`);
+    log(`STEP: ${t.name} cleared (+${released} freed) | avail=${avail()}`, 'ok');
+    render();
+  } else {
+    showMsg('warning', `${t.name} needs ${nd} but only ${avail()} available. Waiting...`);
+  }
+}
+
+let autoTimer = null;
+function autoRun() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; log('AUTO RUN stopped', 'info'); return; }
+  log('AUTO RUN started...', 'info');
+  autoTimer = setInterval(()=>{
+    const { seq } = bankersCheck(S.allocated, avail());
+    if (!seq.length) { clearInterval(autoTimer); autoTimer=null; showMsg('safe','✓ All trains cleared! Junction is free.'); return; }
+    const i = seq[0];
+    const nd = need(i);
+    if (nd <= avail()) {
+      const rel = S.allocated[i]+nd;
+      S.allocated[i]=0; S.status[i]='done';
+      log(`AUTO: ${TRAINS[i].name} cleared | +${rel} freed`, 'ok');
+      render();
+    }
+  }, 1000);
+}
+
+function resetSystem() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer=null; }
+  S = { allocated:[2,1,2,1,1], max:TRAINS.map(t=>t.max), status:TRAINS.map(()=>'waiting'), stepIdx:0 };
+  document.getElementById('logBox').innerHTML='';
+  hideMsg();
+  log('System reset — initial state loaded', 'info');
+  render();
+}
+
+function selectTrain(i) {
+  document.getElementById('reqTrain').value = i;
+  document.getElementById('relTrain').value = i;
+}
+
+// ═══════════════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════════════
+function showMsg(cls, text) {
+  const el = document.getElementById('sysMsg');
+  el.className = `sys-msg ${cls}`;
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>{ el.style.display='none'; }, 6000);
+}
+function hideMsg() { document.getElementById('sysMsg').style.display='none'; }
+
+function log(msg, cls) {
+  const el = document.getElementById('logBox');
+  const ts = new Date().toLocaleTimeString([],{hour12:false});
+  el.innerHTML += `<div class="log-entry log-${cls}"><span class="ts">${ts}</span>${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function highlightStep(n) {
+  document.querySelectorAll('.algo-step').forEach((el,i)=>{
+    el.classList.toggle('active-step', i === n-1);
+  });
+}
+
+// ── Clock ────────────────────────────────────────────
+setInterval(()=>{
+  document.getElementById('clockEl').textContent = new Date().toLocaleTimeString([],{hour12:false});
+}, 1000);
+
+// ── Init ─────────────────────────────────────────────
+render();
+log('Junction control system online — 5 trains, 10 track sections', 'info');
+log('Initial allocation: A=2, B=1, C=2, D=1, E=1', 'info');
+</script>
+</body>
+</html>
